@@ -11,6 +11,9 @@ Two ways to run it:
 - IMPORTANT: attach a persistent disk/volume and point `DATA_FILE` at it, otherwise the database resets on each deploy (free tiers with ephemeral disks lose data).
 - Pages: `/` multi-page site, `/single.html` single-page site.
 
+## Deploy to Netlify
+The included `netlify.toml` publishes the static site from `public/`, so `/` serves `public/index.html`. This static deployment does not run the Express API: admin edits and contact messages are saved only in each visitor's browser. Use a Node host listed above for shared edits and server-stored messages.
+
 ## Admin portal (hidden from visitors)
 There is no admin link on the site. Open it with any of:
 - tap/click the footer copyright line 5 times quickly (works on phone and laptop),
