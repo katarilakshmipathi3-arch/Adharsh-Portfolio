@@ -1,0 +1,24 @@
+const express=require('express'),fs=require('fs'),path=require('path'),crypto=require('crypto');
+const app=express(),PORT=process.env.PORT||3000,FILE=process.env.DATA_FILE||path.join(__dirname,'data','db.json');
+app.set('trust proxy',1);fs.mkdirSync(path.dirname(FILE),{recursive:true});
+let db={site:null,msgs:[],secret:'',pass:''};
+try{db=Object.assign(db,JSON.parse(fs.readFileSync(FILE,'utf8')))}catch(e){}
+const hash=(p,s=crypto.randomBytes(16).toString('hex'))=>s+':'+crypto.scryptSync(p,s,32).toString('hex');
+const check=(p,h)=>{try{const[s,x]=h.split(':');return crypto.timingSafeEqual(Buffer.from(hash(p,s).split(':')[1],'hex'),Buffer.from(x,'hex'))}catch(e){return false}};
+if(!db.secret)db.secret=process.env.SECRET||crypto.randomBytes(32).toString('hex');
+if(process.env.ADMIN_PASSWORD)db.pass=hash(process.env.ADMIN_PASSWORD);else if(!db.pass)throw new Error('ADMIN_PASSWORD is required when no admin password is configured');
+const save=()=>{const t=FILE+'.tmp';fs.writeFileSync(t,JSON.stringify(db));fs.renameSync(t,FILE)};save();
+const sign=d=>crypto.createHmac('sha256',db.secret).update(d).digest('base64url');
+const mk=()=>{const d=Buffer.from(JSON.stringify({exp:Date.now()+12*36e5})).toString('base64url');return d+'.'+sign(d)};
+const auth=(q,r,n)=>{const[d,s]=(q.headers.authorization||'').replace('Bearer ','').split('.');try{if(s&&crypto.timingSafeEqual(Buffer.from(s),Buffer.from(sign(d)))&&JSON.parse(Buffer.from(d,'base64url')).exp>Date.now())return n()}catch(e){}r.status(401).json({error:'unauthorized'})};
+const hits={},limit=(k,max,ms)=>{const n=Date.now();hits[k]=(hits[k]||[]).filter(t=>n-t<ms);if(hits[k].length>=max)return false;hits[k].push(n);return true};
+app.use(express.json({limit:'40mb'}));
+app.get('/api/data',(q,r)=>{r.set('Cache-Control','no-store');r.json({site:db.site})});
+app.post('/api/login',(q,r)=>{if(!limit('l'+q.ip,10,60000))return r.status(429).json({error:'slow down'});if(check(String((q.body||{}).password||''),db.pass))return r.json({token:mk()});r.status(401).json({error:'bad password'})});
+app.put('/api/data',auth,(q,r)=>{const s=q.body&&q.body.site;if(!s||typeof s!='object')return r.status(400).json({error:'bad data'});delete s.msgs;delete s.pw;db.site=s;save();r.json({ok:1})});
+app.post('/api/message',(q,r)=>{if(!limit('m'+q.ip,5,60000))return r.status(429).json({error:'slow down'});const{n,e,m}=q.body||{},c=(x,l)=>String(x||'').slice(0,l);if(!n||!m)return r.status(400).json({error:'missing'});db.msgs.push({n:c(n,100),e:c(e,200),m:c(m,2000),t:Date.now()});db.msgs=db.msgs.slice(-500);save();r.json({ok:1})});
+app.get('/api/messages',auth,(q,r)=>r.json({msgs:db.msgs}));
+app.delete('/api/messages/:i',auth,(q,r)=>{db.msgs.splice(+q.params.i,1);save();r.json({ok:1})});
+app.post('/api/password',auth,(q,r)=>{const p=String((q.body||{}).password||'');if(p.length<6)return r.status(400).json({error:'too short'});db.pass=hash(p);save();r.json({ok:1})});
+app.use(express.static(path.join(__dirname,'public')));
+app.listen(PORT,()=>console.log('Portfolio running on http://localhost:'+PORT));
